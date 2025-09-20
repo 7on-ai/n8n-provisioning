@@ -128,79 +128,105 @@ create_api_key_internal() {
     
     echo "Existing API keys response: ${test_response:0:200}...[TRUNCATED]"
     
-    # สร้าง API key ใหม่ - ลองหลาย payload format
-    echo "Attempting to create new API key..."
+    # สร้าง API key ใหม่ - ใช้ format ที่ถูกต้องตาม validation
+    echo "Creating new API key with proper format..."
     
-    # Method 1: Basic format
-    local api_payload_1='{
-        "label": "auto-generated-'$(date +%s)'"
+    # คำนวณ expiresAt (1 ปีข้างหน้า เป็น Unix timestamp milliseconds)
+    local expires_at=$(($(date +%s) * 1000 + 365 * 24 * 60 * 60 * 1000))
+    
+    # API payload ที่มีครับทุก required fields
+    local api_payload='{
+        "label": "auto-generated-'$(date +%s)'",
+        "scopes": [
+            "workflow:create",
+            "workflow:read", 
+            "workflow:update",
+            "workflow:delete",
+            "workflow:execute",
+            "credential:create",
+            "credential:read",
+            "credential:update", 
+            "credential:delete"
+        ],
+        "expiresAt": '${expires_at}'
     }'
     
-    echo "Trying Method 1: Basic label only"
+    echo "API payload:"
+    echo "$api_payload" | jq '.' 2>/dev/null || echo "$api_payload"
+    
     local api_response=$(curl -s -b /tmp/n8n_cookies -X POST "${n8n_url}/rest/api-keys" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
-        -d "$api_payload_1" 2>&1)
+        -d "$api_payload" 2>&1)
     
-    echo "Method 1 response: $api_response"
+    echo "API creation response: $api_response"
     
     # ตรวจสอบผลลัพธ์
     local api_key=$(echo "$api_response" | jq -r '.apiKey // .data.apiKey // .key // empty' 2>/dev/null)
     
     if [ -n "$api_key" ] && [ "$api_key" != "null" ]; then
-        echo "SUCCESS: API key created with Method 1"
+        echo "SUCCESS: API key created successfully"
         echo "API Key: $api_key"
         echo "$api_key" > /work/n8n-api-key.txt
         return 0
     fi
     
-    # Method 2: With scopes (ตาม error ที่เจอ)
-    local api_payload_2='{
-        "label": "auto-generated-'$(date +%s)'",
-        "scopes": ["*"]
+    # หากยังไม่ได้ ลองใช้ scopes ที่ง่ายกว่า
+    echo "Trying with simplified scopes..."
+    
+    local simple_payload='{
+        "label": "auto-generated-simple-'$(date +%s)'",
+        "scopes": ["*"],
+        "expiresAt": '${expires_at}'
     }'
     
-    echo "Trying Method 2: With scopes"
     api_response=$(curl -s -b /tmp/n8n_cookies -X POST "${n8n_url}/rest/api-keys" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
-        -d "$api_payload_2" 2>&1)
+        -d "$simple_payload" 2>&1)
     
-    echo "Method 2 response: $api_response"
+    echo "Simple scopes response: $api_response"
     
     api_key=$(echo "$api_response" | jq -r '.apiKey // .data.apiKey // .key // empty' 2>/dev/null)
     
     if [ -n "$api_key" ] && [ "$api_key" != "null" ]; then
-        echo "SUCCESS: API key created with Method 2"
+        echo "SUCCESS: API key created with simple scopes"
         echo "API Key: $api_key"
         echo "$api_key" > /work/n8n-api-key.txt
         return 0
     fi
     
-    # Method 3: Full format with common scopes
-    local api_payload_3='{
-        "label": "auto-generated-'$(date +%s)'",
-        "scopes": ["workflow:read", "workflow:write", "credential:read", "credential:write"]
+    # หากยังไม่ได้ ลองไม่ใส่ expiresAt (null)
+    echo "Trying without expiration..."
+    
+    local no_expiry_payload='{
+        "label": "auto-generated-no-expiry-'$(date +%s)'",
+        "scopes": [
+            "workflow:read",
+            "workflow:write",
+            "credential:read",
+            "credential:write"
+        ],
+        "expiresAt": null
     }'
     
-    echo "Trying Method 3: With specific scopes"
     api_response=$(curl -s -b /tmp/n8n_cookies -X POST "${n8n_url}/rest/api-keys" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
-        -d "$api_payload_3" 2>&1)
+        -d "$no_expiry_payload" 2>&1)
     
-    echo "Method 3 response: $api_response"
+    echo "No expiry response: $api_response"
     
     api_key=$(echo "$api_response" | jq -r '.apiKey // .data.apiKey // .key // empty' 2>/dev/null)
     
     if [ -n "$api_key" ] && [ "$api_key" != "null" ]; then
-        echo "SUCCESS: API key created with Method 3"
+        echo "SUCCESS: API key created without expiry"
         echo "API Key: $api_key"
         echo "$api_key" > /work/n8n-api-key.txt
         return 0
     fi
     
-    echo "All API key creation methods failed"
+    echo "All API key creation attempts failed"
     echo "Last response: $api_response"
     return 1
 }
