@@ -174,19 +174,27 @@ create_api_key_direct() {
     
     echo "Login response: $login_response"
     
-    # ดึง token/cookie จาก response
-    local token=$(echo "$login_response" | jq -r '.token // .data.token // .access_token // empty' 2>/dev/null)
+    # ดึง token/cookie จาก response - หลายวิธี
+    local token=$(echo "$login_response" | jq -r '.token // .data.token // .access_token // .accessToken // empty' 2>/dev/null)
+    
+    # หา token ในส่วนอื่นของ response
+    if [ -z "$token" ] || [ "$token" == "null" ]; then
+        # ลองหา token pattern ใน response
+        token=$(echo "$login_response" | grep -oE '"token"[[:space:]]*:[[:space:]]*"[^"]+' | sed 's/.*"//' | head -1)
+    fi
+    
+    echo "Extracted token: ${token:0:20}...[TRUNCATED]"
     
     if [ -n "$token" ] && [ "$token" != "null" ]; then
         echo "Login successful with token, attempting API key creation..."
         
-        # สร้าง API key ด้วย token
+        # สร้าง API key ด้วย token - ใช้ label แทน name
         local api_response=$(curl -s -X POST "${n8n_url}/rest/api-keys" \
             -H "Authorization: Bearer $token" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json" \
             -d "{
-                \"name\": \"auto-generated-$(date +%s)\"
+                \"label\": \"auto-generated-$(date +%s)\"
             }" 2>&1)
         
         echo "API key creation response: $api_response"
@@ -201,21 +209,26 @@ create_api_key_direct() {
         fi
     fi
     
-    # ลอง cookie-based authentication
+    # ลอง cookie-based authentication - บางครั้ง N8N ใช้ session cookies
     echo "Token method failed, trying cookie-based authentication..."
     
-    local cookie_response=$(curl -s -c /tmp/n8n_cookies -X POST "${n8n_url}/rest/login" \
+    local cookie_response=$(curl -s -c /tmp/n8n_cookies -b /tmp/n8n_cookies -X POST "${n8n_url}/rest/login" \
         -H "Content-Type: application/json" \
+        -H "Accept: application/json" \
         -d "{
             \"emailOrLdapLoginId\": \"${N8N_USER_EMAIL}\",
             \"password\": \"${N8N_USER_PASSWORD}\"
         }" 2>&1)
     
-    if [ -f /tmp/n8n_cookies ]; then
+    echo "Cookie login response: ${cookie_response:0:200}...[TRUNCATED]"
+    
+    if [ -f /tmp/n8n_cookies ] && [ -s /tmp/n8n_cookies ]; then
+        echo "Cookies saved, attempting API key creation with cookies..."
         local api_response=$(curl -s -b /tmp/n8n_cookies -X POST "${n8n_url}/rest/api-keys" \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
             -d "{
-                \"name\": \"auto-generated-$(date +%s)\"
+                \"label\": \"auto-generated-$(date +%s)\"
             }" 2>&1)
         
         echo "Cookie-based API key response: $api_response"
@@ -293,15 +306,15 @@ main() {
     echo "Step 5: Waiting 15 seconds after owner setup..."
     sleep 15
     
-    # Step 6: สร้าง API key - ลอง 8man ก่อน แล้ว fallback เป็น direct
-    echo "Step 6: Creating API key with 8man..."
-    if create_api_key_8man; then
-        echo "SUCCESS: N8N API key created with 8man!"
+    # Step 6: เนื่องจาก 8man มีปัญหา login ใช้ Direct REST API เลย
+    echo "Step 6: Creating API key with Direct REST API (skip 8man due to login issues)..."
+    if create_api_key_direct; then
+        echo "SUCCESS: N8N API key created with direct REST API!"
         exit 0
     else
-        echo "8man failed, trying direct N8N REST API..."
-        if create_api_key_direct; then
-            echo "SUCCESS: N8N API key created with direct REST API!"
+        echo "Direct REST API failed, trying 8man as last resort..."
+        if create_api_key_8man; then
+            echo "SUCCESS: N8N API key created with 8man!"
             exit 0
         else
             echo "ERROR: All API key creation methods failed"
