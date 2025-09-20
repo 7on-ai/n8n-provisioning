@@ -1,16 +1,17 @@
-# Dockerfile: n8n-provisioner (แก้ไขให้ใช้ 8man)
-FROM node:18-alpine
+# Dockerfile: n8n-provisioner (ลบ 8man - ใช้ Internal REST API)
+FROM alpine:3.18
 
-# ติดตั้ง 8man
-RUN npm install -g @digital-boss/n8n-manager
+# ติดตั้งเครื่องมือที่จำเป็น (ไม่ต้องการ Node.js/npm)
+RUN apk add --no-cache \
+    curl \
+    jq \
+    bash \
+    ca-certificates
 
-# ติดตั้งเครื่องมือที่ต้องการ (curl, jq, bash)
-RUN apk add --no-cache curl jq bash
-
-# ตั้ง working dir
+# ตั้ง working directory
 WORKDIR /work
 
-# COPY script เข้า image (ใช้ชื่อไฟล์เดิม)
+# Copy script เข้า image
 COPY work/generate-api-key.sh /work/
 
 # ให้ script สามารถรันได้
@@ -19,5 +20,5 @@ RUN chmod +x /work/generate-api-key.sh
 # ENTRYPOINT เป็น sh -c เพื่อให้ Northflank custom command ทำงานได้
 ENTRYPOINT ["/bin/sh", "-c"]
 
-# คำสั่ง default (จะถูก override โดย Northflank custom command)
-CMD ["echo 'n8n-provisioner with 8man ready'"]
+# คำสั่ง default
+CMD ["echo 'n8n-provisioner ready (Internal REST API method)'"]
