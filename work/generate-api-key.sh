@@ -54,14 +54,16 @@ wait_for_n8n() {
     fi
 }
 
-# สร้าง 8man config file - ใช้ HTTPS URL สำหรับ Northflank
+# สร้าง 8man config file - แก้ไข format ให้ถูกต้องตาม 8man docs
 create_8man_config() {
     # Northflank ใช้ HTTPS public URL ไม่มีพอร์ต
     local n8n_url="${N8N_WORKING_URL:-https://${N8N_HOST}}"
     
     cat > /work/8man-config.json << EOF
 {
-  "n8nApiUrl": "${n8n_url}",
+  "n8n": {
+    "url": "${n8n_url}"
+  },
   "restCliClient": {
     "webhookUrl": "${n8n_url}/webhook-test/import-workflow",
     "user": "${N8N_USER_EMAIL}",
@@ -117,15 +119,13 @@ setup_owner() {
     fi
 }
 
-# สร้าง API key ด้วย 8man
+# สร้าง API key ด้วย 8man - แก้ไข command syntax
 create_api_key() {
     echo "Creating N8N API key with 8man..."
     
-    local api_label="provisioned-key-$(date +%s)"
-    
-    # สร้าง API key ด้วย 8man
+    # สร้าง API key ด้วย 8man - ไม่ใช้ --label option ที่ไม่มี
     echo "Running 8man API key creation command..."
-    local api_output=$(8man --config /work/8man-config.json apiKey create --label "$api_label" 2>&1)
+    local api_output=$(8man --config /work/8man-config.json apiKey create 2>&1)
     echo "8man API key creation output:"
     echo "$api_output"
     
@@ -158,7 +158,8 @@ create_api_key() {
         echo "Trying manual API key creation via N8N REST API..."
         
         # Fallback: ลองสร้าง API key ผ่าน N8N REST API โดยตรง
-        return create_api_key_direct
+        create_api_key_direct
+        return $?
     fi
 }
 
