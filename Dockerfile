@@ -1,12 +1,20 @@
-# Dockerfile: n8n-provisioner (ลบ 8man - ใช้ Internal REST API)
-FROM alpine:3.18
+# Dockerfile: n8n-provisioner (Browser Automation Method)
+FROM node:18-alpine
 
-# ติดตั้งเครื่องมือที่จำเป็น (ไม่ต้องการ Node.js/npm)
+# ติดตั้งเครื่องมือที่จำเป็น
 RUN apk add --no-cache \
     curl \
     jq \
     bash \
-    ca-certificates
+    ca-certificates \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz
+
+# ตั้ง environment สำหรับ Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # ตั้ง working directory
 WORKDIR /work
@@ -21,4 +29,4 @@ RUN chmod +x /work/generate-api-key.sh
 ENTRYPOINT ["/bin/sh", "-c"]
 
 # คำสั่ง default
-CMD ["echo 'n8n-provisioner ready (Internal REST API method)'"]
+CMD ["echo 'n8n-provisioner ready (Browser Automation method)'"]
