@@ -1,6 +1,202 @@
 #!/bin/bash
 
-echo "Starting N8N API key generation using Internal REST API..."
+echo "Creating N8N API Key using Browser Automation..."
+
+# Install browser dependencies
+install_browser_deps() {
+    echo "Installing browser automation dependencies..."
+    
+    # Install Puppeteer globally
+    npm install -g puppeteer
+    
+    echo "Puppeteer installed successfully"
+}
+
+# สร้าง Node.js script สำหรับ browser automation
+create_automation_script() {
+    cat > /work/create-api-key.js << 'EOF'
+const puppeteer = require('puppeteer');
+
+async function createApiKey() {
+    const N8N_URL = process.env.N8N_WORKING_URL;
+    const EMAIL = process.env.N8N_USER_EMAIL;
+    const PASSWORD = process.env.N8N_USER_PASSWORD;
+    
+    console.log('Launching browser...');
+    
+    const browser = await puppeteer.launch({
+        executablePath: '/usr/bin/chromium-browser',
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu'
+        ]
+    });
+    
+    try {
+        const page = await browser.newPage();
+        
+        // Set viewport
+        await page.setViewport({ width: 1280, height: 800 });
+        
+        console.log('Navigating to N8N login...');
+        await page.goto(`${N8N_URL}/signin`, { waitUntil: 'networkidle2', timeout: 30000 });
+        
+        // Wait for login form to appear
+        await page.waitForSelector('input[name="email"], input[data-test-id="email"], [data-test="email"]', { timeout: 10000 });
+        
+        // Login - try multiple selectors
+        console.log('Filling login form...');
+        const emailSelector = await page.$('input[name="email"]') || await page.$('input[data-test-id="email"]') || await page.$('[data-test="email"]');
+        const passwordSelector = await page.$('input[name="password"]') || await page.$('input[data-test-id="password"]') || await page.$('[data-test="password"]');
+        
+        if (emailSelector && passwordSelector) {
+            await emailSelector.type(EMAIL);
+            await passwordSelector.type(PASSWORD);
+        } else {
+            // Fallback to generic input selectors
+            const inputs = await page.$('input');
+            if (inputs.length >= 2) {
+                await inputs[0].type(EMAIL);
+                await inputs[1].type(PASSWORD);
+            } else {
+                throw new Error('Could not find login form inputs');
+            }
+        }
+        
+        // Click login button - try multiple selectors
+        const loginButton = await page.$('button[data-test-id="signin-button"]') || 
+                           await page.$('button[type="submit"]') || 
+                           await page.$('button:contains("Sign in")');
+        
+        if (loginButton) {
+            await loginButton.click();
+        } else {
+            await page.keyboard.press('Enter');
+        }
+        
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+        
+        console.log('Login successful, navigating to settings...');
+        
+        // Navigate to settings - try multiple approaches
+        let settingsLoaded = false;
+        try {
+            await page.goto(`${N8N_URL}/settings/api`, { waitUntil: 'networkidle2', timeout: 30000 });
+            settingsLoaded = true;
+        } catch (e) {
+            console.log('Direct settings navigation failed, trying menu navigation...');
+            await page.goto(`${N8N_URL}`, { waitUntil: 'networkidle2' });
+            
+            // Look for settings menu
+            const settingsMenu = await page.$('[data-test-id="menu-settings"]') || await page.$('a[href="/settings"]') || await page.$('a:contains("Settings")');
+            if (settingsMenu) {
+                await settingsMenu.click();
+                await page.waitForTimeout(2000);
+                
+                // Click API submenu
+                const apiMenu = await page.$('a[href="/settings/api"]') || await page.$('a:contains("API")');
+                if (apiMenu) {
+                    await apiMenu.click();
+                    await page.waitForTimeout(2000);
+                    settingsLoaded = true;
+                }
+            }
+        }
+        
+        if (!settingsLoaded) {
+            throw new Error('Could not navigate to API settings page');
+        }
+        
+        console.log('Looking for create API key button...');
+        
+        // Wait for and click create API key button - multiple selectors
+        let createButton;
+        const buttonSelectors = [
+            '[data-test-id="create-api-key-button"]',
+            'button:contains("Create API Key")',
+            'button:contains("Create")',
+            '.el-button--primary',
+            'button[type="button"]'
+        ];
+        
+        for (const selector of buttonSelectors) {
+            try {
+                createButton = await page.waitForSelector(selector, { timeout: 5000 });
+                if (createButton) {
+                    console.log(`Found create button with selector: ${selector}`);
+                    break;
+                }
+            } catch (e) {
+                console.log(`Selector ${selector} not found, trying next...`);
+            }
+        }
+        
+        if (!createButton) {
+            throw new Error('Could not find create API key button');
+        }
+        
+        console.log('Creating API key...');
+        await createButton.click();
+        
+        // Wait for API key to be generated - multiple approaches
+        await page.waitForTimeout(3000);
+        
+        let apiKey = null;
+        const keySelectors = [
+            '[data-test-id="api-key-value"]',
+            '.api-key-value',
+            'code',
+            'pre',
+            'input[readonly]',
+            '.el-input__inner[readonly]'
+        ];
+        
+        for (const selector of keySelectors) {
+            try {
+                const element = await page.$(selector);
+                if (element) {
+                    const text = await element.evaluate(el => el.textContent || el.value);
+                    if (text && text.length > 20) {  // API keys are usually long
+                        apiKey = text.trim();
+                        console.log(`Found API key with selector: ${selector}`);
+                        break;
+                    }
+                }
+            } catch (e) {
+                console.log(`Selector ${selector} failed, trying next...`);
+            }
+        }
+        
+        if (!apiKey) {
+            // Last resort - screenshot for debugging
+            await page.screenshot({ path: '/work/debug-screenshot.png' });
+            throw new Error('Could not extract API key from page');
+        }
+        
+        console.log('API Key created successfully:', apiKey.substring(0, 10) + '...[HIDDEN]');
+        console.log('Full API Key:', apiKey);
+        
+        // Save to file
+        require('fs').writeFileSync('/work/n8n-api-key.txt', apiKey);
+        
+        console.log('SUCCESS: API key saved to file');
+        
+    } catch (error) {
+        console.error('Browser automation error:', error);
+        process.exit(1);
+    } finally {
+        await browser.close();
+    }
+}
+
+createApiKey();
+EOF
+
+    echo "Browser automation script created"
+}
 
 # รอให้ N8N พร้อม
 wait_for_n8n() {
@@ -11,48 +207,28 @@ wait_for_n8n() {
         "http://n8n:5678"
     )
     
-    local working_url=""
-    
     for url in "${n8n_urls[@]}"; do
         echo "Testing: $url/healthz"
         if curl -f -s --connect-timeout 10 --max-time 15 "$url/healthz" > /dev/null 2>&1; then
-            working_url="$url"
-            echo "Found working N8N URL: $working_url"
-            export N8N_WORKING_URL="$working_url"
+            export N8N_WORKING_URL="$url"
+            echo "Found working N8N URL: $url"
             return 0
         fi
     done
     
-    echo "No working N8N URL found yet, trying extended wait..."
-    for i in {1..8}; do
-        echo "Extended health check attempt $i/8..."
-        for url in "${n8n_urls[@]}"; do
-            if curl -f -s --connect-timeout 10 --max-time 15 "$url/healthz" > /dev/null 2>&1; then
-                working_url="$url"
-                echo "N8N health check passed with URL: $working_url"
-                export N8N_WORKING_URL="$working_url"
-                return 0
-            fi
-        done
-        echo "N8N not ready, waiting 30 seconds... (attempt $i/8)"
-        sleep 30
-    done
-    
-    echo "N8N failed to become ready after 8 attempts"
+    echo "N8N failed to become ready"
     return 1
 }
 
 # Setup owner account
 setup_owner() {
-    local n8n_url="${N8N_WORKING_URL:-https://${N8N_HOST}}"
-    echo "Setting up N8N owner account using URL: $n8n_url"
+    local n8n_url="${N8N_WORKING_URL}"
+    echo "Setting up N8N owner account..."
     
     local setup_url="${n8n_url}/rest/owner/setup"
-    echo "Attempting owner setup at: $setup_url"
     
     local owner_response=$(curl -s -X POST "$setup_url" \
         -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
         -d "{
             \"email\": \"${N8N_USER_EMAIL}\",
             \"firstName\": \"${N8N_FIRST_NAME:-User}\",
@@ -61,238 +237,45 @@ setup_owner() {
         }" 2>&1)
     
     echo "Owner setup response: $owner_response"
-    
-    # Owner setup มักจะสำเร็จแม้ว่าจะมี error "already setup"
-    if echo "$owner_response" | grep -qi "already.setup\|success\|created"; then
-        echo "Owner account is ready!"
-        return 0
-    fi
-    
-    echo "Owner setup completed (may already exist)"
     return 0
 }
 
-# Login to N8N and get session cookies
-login_to_n8n() {
-    local n8n_url="${N8N_WORKING_URL:-https://${N8N_HOST}}"
-    echo "Logging into N8N at: $n8n_url"
-    
-    local login_url="${n8n_url}/rest/login"
-    local login_payload='{
-        "emailOrLdapLoginId": "'${N8N_USER_EMAIL}'",
-        "password": "'${N8N_USER_PASSWORD}'"
-    }'
-    
-    echo "Attempting N8N login..."
-    local login_response=$(curl -s -c /tmp/n8n_cookies -X POST "$login_url" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -H "User-Agent: N8N-Provisioner/1.0" \
-        -d "$login_payload" 2>&1)
-    
-    echo "Login response: ${login_response:0:200}...[TRUNCATED]"
-    
-    # ตรวจสอบว่า login สำเร็จ
-    if echo "$login_response" | grep -qi '"data".*"id"'; then
-        echo "Login successful - checking cookies..."
-        
-        if [ -f /tmp/n8n_cookies ] && [ -s /tmp/n8n_cookies ]; then
-            echo "Session cookies saved successfully"
-            echo "Cookie file contents:"
-            cat /tmp/n8n_cookies | head -5
-            return 0
-        else
-            echo "Login successful but no cookies saved"
-            return 1
-        fi
-    else
-        echo "Login failed or unexpected response"
-        return 1
-    fi
-}
-
-# สร้าง API key ใช้ N8N Internal REST API
-create_api_key_internal() {
-    local n8n_url="${N8N_WORKING_URL:-https://${N8N_HOST}}"
-    echo "Creating API key using N8N Internal REST API..."
-    
-    if [ ! -f /tmp/n8n_cookies ]; then
-        echo "No session cookies found"
-        return 1
-    fi
-    
-    # ตรวจสอบ API keys endpoint ที่มีอยู่
-    echo "Testing API keys endpoint..."
-    local test_response=$(curl -s -b /tmp/n8n_cookies -X GET "${n8n_url}/rest/api-keys" \
-        -H "Accept: application/json" 2>&1)
-    
-    echo "Existing API keys response: ${test_response:0:200}...[TRUNCATED]"
-    
-    # สร้าง API key ใหม่ - ใช้ format ที่ถูกต้องตาม validation
-    echo "Creating new API key with proper format..."
-    
-    # คำนวณ expiresAt (1 ปีข้างหน้า เป็น Unix timestamp milliseconds)
-    local expires_at=$(($(date +%s) * 1000 + 365 * 24 * 60 * 60 * 1000))
-    
-    # API payload ที่มีครับทุก required fields
-    local api_payload='{
-        "label": "auto-generated-'$(date +%s)'",
-        "scopes": [
-            "workflow:create",
-            "workflow:read", 
-            "workflow:update",
-            "workflow:delete",
-            "workflow:execute",
-            "credential:create",
-            "credential:read",
-            "credential:update", 
-            "credential:delete"
-        ],
-        "expiresAt": '${expires_at}'
-    }'
-    
-    echo "API payload:"
-    echo "$api_payload" | jq '.' 2>/dev/null || echo "$api_payload"
-    
-    local api_response=$(curl -s -b /tmp/n8n_cookies -X POST "${n8n_url}/rest/api-keys" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -d "$api_payload" 2>&1)
-    
-    echo "API creation response: $api_response"
-    
-    # ตรวจสอบผลลัพธ์
-    local api_key=$(echo "$api_response" | jq -r '.apiKey // .data.apiKey // .key // empty' 2>/dev/null)
-    
-    if [ -n "$api_key" ] && [ "$api_key" != "null" ]; then
-        echo "SUCCESS: API key created successfully"
-        echo "API Key: $api_key"
-        echo "$api_key" > /work/n8n-api-key.txt
-        return 0
-    fi
-    
-    # หากยังไม่ได้ ลองใช้ scopes ที่ง่ายกว่า
-    echo "Trying with simplified scopes..."
-    
-    local simple_payload='{
-        "label": "auto-generated-simple-'$(date +%s)'",
-        "scopes": ["*"],
-        "expiresAt": '${expires_at}'
-    }'
-    
-    api_response=$(curl -s -b /tmp/n8n_cookies -X POST "${n8n_url}/rest/api-keys" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -d "$simple_payload" 2>&1)
-    
-    echo "Simple scopes response: $api_response"
-    
-    api_key=$(echo "$api_response" | jq -r '.apiKey // .data.apiKey // .key // empty' 2>/dev/null)
-    
-    if [ -n "$api_key" ] && [ "$api_key" != "null" ]; then
-        echo "SUCCESS: API key created with simple scopes"
-        echo "API Key: $api_key"
-        echo "$api_key" > /work/n8n-api-key.txt
-        return 0
-    fi
-    
-    # หากยังไม่ได้ ลองไม่ใส่ expiresAt (null)
-    echo "Trying without expiration..."
-    
-    local no_expiry_payload='{
-        "label": "auto-generated-no-expiry-'$(date +%s)'",
-        "scopes": [
-            "workflow:read",
-            "workflow:write",
-            "credential:read",
-            "credential:write"
-        ],
-        "expiresAt": null
-    }'
-    
-    api_response=$(curl -s -b /tmp/n8n_cookies -X POST "${n8n_url}/rest/api-keys" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -d "$no_expiry_payload" 2>&1)
-    
-    echo "No expiry response: $api_response"
-    
-    api_key=$(echo "$api_response" | jq -r '.apiKey // .data.apiKey // .key // empty' 2>/dev/null)
-    
-    if [ -n "$api_key" ] && [ "$api_key" != "null" ]; then
-        echo "SUCCESS: API key created without expiry"
-        echo "API Key: $api_key"
-        echo "$api_key" > /work/n8n-api-key.txt
-        return 0
-    fi
-    
-    echo "All API key creation attempts failed"
-    echo "Last response: $api_response"
-    return 1
-}
-
-# Debug function
-debug_info() {
-    echo "=== Debug Information ==="
-    echo "N8N_HOST: ${N8N_HOST:-NOT SET}"
-    echo "N8N_USER_EMAIL: ${N8N_USER_EMAIL:-NOT SET}"
-    echo "N8N_WORKING_URL: ${N8N_WORKING_URL:-NOT SET}"
-    
-    echo "=== Environment Variables ==="
-    env | grep -E '^N8N_|^NORTHFLANK_' | sort
-}
-
-# Main execution function
+# Main execution
 main() {
-    echo "=== N8N API Key Generation Started (Internal REST API Method) ==="
-    
-    # Debug info
-    debug_info
+    echo "=== N8N API Key Generation via Browser Automation ==="
     
     # Step 1: Wait for N8N
-    echo "Step 1: Waiting for N8N to be ready..."
     if ! wait_for_n8n; then
         echo "ERROR: N8N failed to become ready"
         exit 1
     fi
     
     # Step 2: Setup owner
-    echo "Step 2: Setting up owner account..."
-    if ! setup_owner; then
-        echo "WARNING: Owner setup may have failed, continuing..."
-    fi
+    setup_owner
     
-    # Step 3: Wait a bit
-    echo "Step 3: Waiting 30 seconds after owner setup..."
-    sleep 30
+    # Step 3: Install dependencies
+    echo "Installing browser automation dependencies..."
+    install_browser_deps
     
-    # Step 4: Login to N8N
-    echo "Step 4: Logging into N8N..."
-    if ! login_to_n8n; then
-        echo "ERROR: Failed to login to N8N"
-        exit 1
-    fi
+    # Step 4: Create automation script
+    create_automation_script
     
-    # Step 5: Wait after login
-    echo "Step 5: Waiting 10 seconds after login..."
-    sleep 10
+    # Step 5: Wait for N8N UI to be fully ready
+    echo "Waiting for N8N UI to be ready..."
+    sleep 60
     
-    # Step 6: Create API key
-    echo "Step 6: Creating API key using Internal REST API..."
-    if create_api_key_internal; then
-        echo "SUCCESS: N8N API key created successfully!"
-        
-        if [ -f /work/n8n-api-key.txt ]; then
-            echo "API key saved to: /work/n8n-api-key.txt"
-            echo "API key: $(cat /work/n8n-api-key.txt)"
-        fi
-        
+    # Step 6: Run browser automation
+    echo "Running browser automation..."
+    cd /work
+    node create-api-key.js
+    
+    if [ -f /work/n8n-api-key.txt ]; then
+        echo "SUCCESS: API key created via browser automation"
         exit 0
     else
-        echo "ERROR: Failed to create N8N API key using Internal REST API"
+        echo "ERROR: Browser automation failed"
         exit 1
     fi
 }
 
-# Run main function
 main
