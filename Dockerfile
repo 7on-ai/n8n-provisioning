@@ -1,11 +1,23 @@
-# Dockerfile (Debian slim) - Recommended for Puppeteer
+# Enhanced Dockerfile for stable Puppeteer execution in containers
 FROM node:18-bullseye-slim
 
-# Install Chromium and all required dependencies for Puppeteer
+# Install essential dependencies and Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
+    # Core system packages
     ca-certificates \
+    curl \
+    jq \
+    bash \
+    dumb-init \
+    procps \
+    # Chromium and browser dependencies
+    chromium \
+    chromium-sandbox \
+    # Font and rendering support
     fonts-liberation \
+    fonts-dejavu-core \
+    fontconfig \
+    # Essential browser libraries
     libnss3 \
     libxss1 \
     libasound2 \
@@ -21,33 +33,57 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage1 \
     libxrandr2 \
     libgbm1 \
+    libxkbcommon0 \
+    # Additional stability packages
     lsb-release \
     xdg-utils \
-    dumb-init \
-    curl \
-    jq \
-    bash \
- && rm -rf /var/lib/apt/lists/*
+    # Memory management tools
+    && echo "kernel.unprivileged_userns_clone=1" >> /etc/sysctl.conf \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for better security
+RUN groupadd -r automation && useradd -r -g automation -G audio,video automation \
+    && mkdir -p /work \
+    && chown -R automation:automation /work
 
 # Set workdir
 WORKDIR /work
 
-# Puppeteer config (skip Chromium download, use system-installed Chromium)
+# Environment variables for Puppeteer optimization
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    NODE_ENV=production
+    PUPPETEER_ARGS="--no-sandbox --disable-setuid-sandbox" \
+    NODE_ENV=production \
+    NODE_OPTIONS="--max-old-space-size=512" \
+    DEBIAN_FRONTEND=noninteractive \
+    # Memory and performance tuning
+    NODE_MAX_OLD_SPACE_SIZE=512 \
+    UV_THREADPOOL_SIZE=4
 
-# Install puppeteer (system Chromium will be used)
+# Install Node.js dependencies as root first
 RUN npm init -y \
- && npm install puppeteer@21 --omit=dev --no-audit --no-fund \
- && npm prune --production
+    && npm install puppeteer@21 --omit=dev --no-audit --no-fund \
+    && npm prune --production \
+    && npm cache clean --force
 
-# Copy script
+# Copy scripts and set permissions
 COPY work/generate-api-key.sh /work/
-RUN chmod +x /work/generate-api-key.sh
+RUN chmod +x /work/generate-api-key.sh \
+    && chown -R automation:automation /work
 
-# Entrypoint
+# Switch to non-root user
+USER automation
+
+# Create directories with proper permissions
+RUN mkdir -p /work/screenshots /work/logs \
+    && chmod 755 /work/screenshots /work/logs
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD node -e "console.log('Container healthy')" || exit 1
+
+# Use dumb-init for proper signal handling
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 
-# Default CMD
-CMD ["echo", "n8n-provisioner ready (Browser Automation method)"]
+# Default command
+CMD ["echo", "n8n-provisioner ready (Enhanced Browser Automation)"]
