@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Creating N8N API Key using Browser Automation (Simple Fixed Version)..."
+echo "Creating N8N API Key using Browser Automation (Stable Fixed Version)..."
 
 # ตรวจสอบ environment variables ที่จำเป็น
 check_env_vars() {
@@ -20,7 +20,7 @@ check_env_vars() {
     fi
 }
 
-# สร้าง Node.js script ที่แก้ไขปัญหาหลักเท่านั้น
+# สร้าง Node.js script ที่แก้ไขปัญหา frame detachment
 create_automation_script() {
     cat > /work/create-api-key.js << 'EOF'
 const puppeteer = require('puppeteer');
@@ -43,300 +43,347 @@ async function createApiKey() {
     
     let browser = null;
     let page = null;
+    let retryCount = 0;
+    const maxRetries = 2;
     
-    try {
-        console.log(`${new Date().toISOString()} Launching browser...`);
-        
-        // ใช้ browser args ที่เรียบง่ายและทดสอบแล้ว
-        browser = await puppeteer.launch({
-            executablePath: '/usr/bin/chromium',
-            headless: 'new',
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-web-security',
-                '--disable-extensions',
-                '--disable-plugins',
-                '--disable-images',
-                '--disable-css',
-                '--no-zygote',
-                '--single-process',
-                '--memory-pressure-off',
-                '--max_old_space_size=1024'
-            ],
-            timeout: 60000,
-            protocolTimeout: 60000
-        });
-        
-        console.log(`${new Date().toISOString()} Browser launched successfully`);
-        
-        page = await browser.newPage();
-        console.log(`${new Date().toISOString()} New page created`);
-        
-        // ตั้งค่า page พื้นฐาน
-        await page.setViewport({ width: 1280, height: 800 });
-        await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36');
-        
-        // ปิดการโหลด resources ที่ไม่จำเป็น
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            const resourceType = req.resourceType();
-            if (['image', 'font', 'media'].includes(resourceType)) {
-                req.abort();
-            } else {
-                req.continue();
-            }
-        });
-        
-        console.log(`${new Date().toISOString()} Navigating to signin page: ${N8N_URL}/signin`);
-        
-        // Navigate with simple settings
-        await page.goto(`${N8N_URL}/signin`, { 
-            waitUntil: 'domcontentloaded',
-            timeout: 90000
-        });
-        
-        console.log(`${new Date().toISOString()} Page loaded, waiting for form elements...`);
-        
-        // รอให้หน้าเสถียร
-        await page.waitForTimeout(3000);
-        
-        // หา login form elements
-        let emailInput = null;
-        let passwordInput = null;
-        
+    while (retryCount <= maxRetries) {
         try {
-            console.log(`${new Date().toISOString()} Looking for email input...`);
-            emailInput = await page.waitForSelector('input[type="email"], input[name="email"], input[id*="email"]', {
+            console.log(`${new Date().toISOString()} Attempt ${retryCount + 1}/${maxRetries + 1} - Launching browser...`);
+            
+            // แก้ไข browser args เพื่อป้องกัน frame detachment
+            browser = await puppeteer.launch({
+                executablePath: '/usr/bin/chromium',
+                headless: 'new',
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-extensions',
+                    '--disable-plugins',
+                    '--disable-images',
+                    '--no-zygote',
+                    '--single-process',
+                    '--memory-pressure-off',
+                    '--max_old_space_size=512',
+                    // เพิ่ม flags สำหรับความเสถียร
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-features=TranslateUI,BlinkGenPropertyTrees',
+                    '--disable-ipc-flooding-protection',
+                    '--disable-component-extensions-with-background-pages'
+                ],
                 timeout: 30000,
-                visible: true
+                protocolTimeout: 30000,
+                // เพิ่มการจัดการ error
+                handleSIGINT: false,
+                handleSIGTERM: false,
+                handleSIGHUP: false
             });
-            console.log(`${new Date().toISOString()} Email input found`);
             
-            console.log(`${new Date().toISOString()} Looking for password input...`);
-            passwordInput = await page.waitForSelector('input[type="password"], input[name="password"], input[id*="password"]', {
-                timeout: 10000,
-                visible: true
-            });
-            console.log(`${new Date().toISOString()} Password input found`);
+            console.log(`${new Date().toISOString()} Browser launched successfully`);
             
-        } catch (selectorError) {
-            console.error(`${new Date().toISOString()} Login form not found: ${selectorError.message}`);
-            throw new Error(`Login form not found`);
-        }
-        
-        // Fill form
-        console.log(`${new Date().toISOString()} Filling login form...`);
-        
-        await emailInput.click({ clickCount: 3 });
-        await emailInput.type(EMAIL, { delay: 50 });
-        
-        await passwordInput.click({ clickCount: 3 });
-        await passwordInput.type(PASSWORD, { delay: 50 });
-        
-        console.log(`${new Date().toISOString()} Form filled, submitting...`);
-        
-        // Submit form
-        await passwordInput.press('Enter');
-        
-        // Wait for login - แก้ไขให้รองรับหลายกรณี
-        try {
-            await page.waitForNavigation({ 
-                waitUntil: 'domcontentloaded',
-                timeout: 30000 
+            page = await browser.newPage();
+            console.log(`${new Date().toISOString()} New page created`);
+            
+            // ตั้งค่า page สำหรับความเสถียร
+            await page.setViewport({ width: 1280, height: 800 });
+            await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36');
+            
+            // เพิ่ม error handlers
+            page.on('error', (err) => {
+                console.log(`${new Date().toISOString()} Page error: ${err.message}`);
             });
+            
+            page.on('pageerror', (err) => {
+                console.log(`${new Date().toISOString()} Page script error: ${err.message}`);
+            });
+            
+            // ปิดการโหลด resources ที่ไม่จำเป็น
+            await page.setRequestInterception(true);
+            page.on('request', (req) => {
+                const resourceType = req.resourceType();
+                if (['image', 'font', 'media', 'stylesheet'].includes(resourceType)) {
+                    req.abort();
+                } else {
+                    req.continue();
+                }
+            });
+            
+            console.log(`${new Date().toISOString()} Navigating to signin page: ${N8N_URL}/signin`);
+            
+            // Navigate with retry mechanism
+            await page.goto(`${N8N_URL}/signin`, { 
+                waitUntil: 'networkidle0',
+                timeout: 60000
+            });
+            
+            console.log(`${new Date().toISOString()} Page loaded, waiting for form elements...`);
+            
+            // รอให้หน้าเสถียร
+            await page.waitForTimeout(2000);
+            
+            // หา login form elements with better error handling
+            let emailInput = null;
+            let passwordInput = null;
+            
+            try {
+                console.log(`${new Date().toISOString()} Looking for email input...`);
+                emailInput = await page.waitForSelector('input[type="email"], input[name="email"], input[id*="email"]', {
+                    timeout: 20000,
+                    visible: true
+                });
+                console.log(`${new Date().toISOString()} Email input found`);
+                
+                console.log(`${new Date().toISOString()} Looking for password input...`);
+                passwordInput = await page.waitForSelector('input[type="password"], input[name="password"], input[id*="password"]', {
+                    timeout: 10000,
+                    visible: true
+                });
+                console.log(`${new Date().toISOString()} Password input found`);
+                
+            } catch (selectorError) {
+                console.error(`${new Date().toISOString()} Login form not found: ${selectorError.message}`);
+                throw new Error(`Login form not found on attempt ${retryCount + 1}`);
+            }
+            
+            // Fill form with stability improvements
+            console.log(`${new Date().toISOString()} Filling login form...`);
+            
+            await emailInput.click({ clickCount: 3 });
+            await page.waitForTimeout(100);
+            await emailInput.type(EMAIL, { delay: 25 });
+            
+            await passwordInput.click({ clickCount: 3 });
+            await page.waitForTimeout(100);
+            await passwordInput.type(PASSWORD, { delay: 25 });
+            
+            console.log(`${new Date().toISOString()} Form filled, submitting...`);
+            
+            // Submit form และรอผล
+            await Promise.all([
+                page.waitForNavigation({ 
+                    waitUntil: 'networkidle0',
+                    timeout: 20000 
+                }),
+                passwordInput.press('Enter')
+            ]);
+            
             console.log(`${new Date().toISOString()} Login navigation completed`);
-        } catch (navError) {
-            console.log(`${new Date().toISOString()} Navigation timeout, checking current URL...`);
-            const currentUrl = await page.url();
-            console.log(`${new Date().toISOString()} Current URL: ${currentUrl}`);
             
+            // ตรวจสอบว่า login สำเร็จ
+            const currentUrl = await page.url();
             if (currentUrl.includes('/signin') || currentUrl.includes('/login')) {
                 throw new Error('Login failed - still on signin page');
             }
-            console.log(`${new Date().toISOString()} Login appears successful (URL changed)`);
-        }
-        
-        // Navigate to API settings
-        console.log(`${new Date().toISOString()} Going to API settings...`);
-        await page.goto(`${N8N_URL}/settings/api`, {
-            waitUntil: 'domcontentloaded',
-            timeout: 60000
-        });
-        
-        await page.waitForTimeout(5000);
-        console.log(`${new Date().toISOString()} API settings page loaded`);
-        
-        // Find create button - ใช้วิธีง่ายๆ
-        console.log(`${new Date().toISOString()} Looking for create API key button...`);
-        let createButton = null;
-        
-        // ลองหา button ตามลำดับ
-        const buttonSelectors = [
-            'button[data-test-id*="create"]',
-            'button:has-text("Create API key")',
-            'button:has-text("Create API Key")', 
-            'button:has-text("Create")',
-            '.el-button--primary',
-            'button.btn-primary'
-        ];
-        
-        for (const selector of buttonSelectors) {
-            try {
-                createButton = await page.waitForSelector(selector, { 
-                    timeout: 5000,
-                    visible: true 
-                });
-                if (createButton) {
-                    console.log(`${new Date().toISOString()} Found button: ${selector}`);
-                    break;
-                }
-            } catch (e) {
-                console.log(`${new Date().toISOString()} Button ${selector} not found`);
-            }
-        }
-        
-        // Fallback: หา button ที่มี text "create"
-        if (!createButton) {
-            const buttons = await page.$$('button');
-            console.log(`${new Date().toISOString()} Scanning ${buttons.length} buttons for create text...`);
             
-            for (const button of buttons) {
-                const text = await button.evaluate(el => el.textContent?.toLowerCase() || '');
-                if (text.includes('create') || text.includes('api')) {
-                    createButton = button;
-                    console.log(`${new Date().toISOString()} Found button by text: ${text}`);
-                    break;
+            // Navigate to API settings
+            console.log(`${new Date().toISOString()} Going to API settings...`);
+            await page.goto(`${N8N_URL}/settings/api`, {
+                waitUntil: 'networkidle0',
+                timeout: 30000
+            });
+            
+            await page.waitForTimeout(3000);
+            console.log(`${new Date().toISOString()} API settings page loaded`);
+            
+            // Find create button with improved selector strategy
+            console.log(`${new Date().toISOString()} Looking for create API key button...`);
+            let createButton = null;
+            
+            // ลองหา button ตามลำดับที่ปรับปรุงแล้ว
+            const buttonSelectors = [
+                'button[data-test-id*="create"]',
+                'button:has-text("Create API key")',
+                'button:has-text("Create API Key")', 
+                'button:has-text("Create")',
+                'button.el-button--primary',
+                'button.btn-primary',
+                '.el-button[type="button"]'
+            ];
+            
+            for (const selector of buttonSelectors) {
+                try {
+                    await page.waitForSelector(selector, { timeout: 3000 });
+                    createButton = await page.$(selector);
+                    if (createButton) {
+                        const isVisible = await createButton.isIntersectingViewport();
+                        if (isVisible) {
+                            console.log(`${new Date().toISOString()} Found visible button: ${selector}`);
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    // Continue to next selector
                 }
             }
-        }
-        
-        if (!createButton) {
-            throw new Error('Create API key button not found');
-        }
-        
-        // Click create button
-        console.log(`${new Date().toISOString()} Clicking create button...`);
-        await createButton.click();
-        console.log(`${new Date().toISOString()} Button clicked, waiting for API key...`);
-        
-        // รอให้ API key ปรากฏ
-        await page.waitForTimeout(8000);
-        
-        // Extract API key
-        console.log(`${new Date().toISOString()} Extracting API key...`);
-        let apiKey = null;
-        
-        // ใช้วิธีหลักเดิมที่ใช้ได้
-        const keySelectors = [
-            'code',
-            'pre',
-            'input[readonly]',
-            'textarea[readonly]',
-            '[data-test*="api-key"]',
-            '.api-key',
-            '.el-input__inner[readonly]',
-            'span[style*="font-family: monospace"]'
-        ];
-        
-        for (const selector of keySelectors) {
-            try {
-                const elements = await page.$$(selector);
-                console.log(`${new Date().toISOString()} Found ${elements.length} elements for ${selector}`);
+            
+            // Fallback: หา button ที่มี text "create"
+            if (!createButton) {
+                const buttons = await page.$$('button');
+                console.log(`${new Date().toISOString()} Scanning ${buttons.length} buttons for create text...`);
                 
-                for (const element of elements) {
-                    const text = await element.evaluate(el => 
-                        el.textContent || el.value || el.getAttribute('value') || ''
-                    );
-                    
-                    // ตรวจสอบว่าเป็น API key (มากกว่า 20 ตัวอักษร และเป็น alphanumeric)
-                    if (text && text.length > 20 && /^[a-zA-Z0-9_.-]{20,}$/.test(text.trim())) {
-                        apiKey = text.trim();
-                        console.log(`${new Date().toISOString()} Found API key with ${selector} (length: ${apiKey.length})`);
+                for (const button of buttons) {
+                    const text = await button.evaluate(el => el.textContent?.toLowerCase() || '');
+                    const isVisible = await button.isIntersectingViewport();
+                    if ((text.includes('create') || text.includes('api')) && isVisible) {
+                        createButton = button;
+                        console.log(`${new Date().toISOString()} Found button by text: ${text}`);
                         break;
                     }
                 }
-                if (apiKey) break;
-            } catch (e) {
-                console.log(`${new Date().toISOString()} Selector ${selector} failed: ${e.message}`);
             }
-        }
-        
-        // Fallback: scan page content
-        if (!apiKey) {
-            console.log(`${new Date().toISOString()} Scanning page content for API key pattern...`);
-            const pageContent = await page.content();
-            const matches = pageContent.match(/[a-zA-Z0-9_.-]{25,}/g);
             
-            if (matches && matches.length > 0) {
-                // หา match ที่ยาวที่สุด (API keys มักจะยาว)
-                apiKey = matches.reduce((longest, current) => 
-                    current.length > longest.length ? current : longest
-                );
-                console.log(`${new Date().toISOString()} Found API key from page scan (length: ${apiKey.length})`);
+            if (!createButton) {
+                throw new Error('Create API key button not found');
             }
-        }
-        
-        if (!apiKey) {
-            throw new Error('Could not extract API key from page');
-        }
-        
-        console.log(`${new Date().toISOString()} SUCCESS: API Key extracted!`);
-        console.log(`${new Date().toISOString()} Length: ${apiKey.length}`);
-        console.log(`${new Date().toISOString()} Preview: ${apiKey.substring(0, 10)}...`);
-        
-        // Save key
-        fs.writeFileSync('/work/n8n-api-key.txt', apiKey);
-        console.log(`${new Date().toISOString()} API key saved to file`);
-        
-        return apiKey;
-        
-    } catch (error) {
-        console.error(`${new Date().toISOString()} ERROR: ${error.message}`);
-        throw error;
-        
-    } finally {
-        // Cleanup - ทำให้เรียบง่าย
-        console.log(`${new Date().toISOString()} Cleaning up...`);
-        
-        if (page) {
-            try {
-                await page.close();
-                console.log(`${new Date().toISOString()} Page closed`);
-            } catch (e) {
-                console.log(`${new Date().toISOString()} Page close warning: ${e.message}`);
+            
+            // Click create button with stability
+            console.log(`${new Date().toISOString()} Clicking create button...`);
+            await createButton.click();
+            console.log(`${new Date().toISOString()} Button clicked, waiting for API key...`);
+            
+            // รอให้ API key ปรากฏ
+            await page.waitForTimeout(5000);
+            
+            // Extract API key with improved method
+            console.log(`${new Date().toISOString()} Extracting API key...`);
+            let apiKey = null;
+            
+            const keySelectors = [
+                'code',
+                'pre', 
+                'input[readonly]',
+                'textarea[readonly]',
+                '[data-test*="api-key"]',
+                '.api-key',
+                '.el-input__inner[readonly]',
+                'span[style*="font-family: monospace"]',
+                'div[class*="api-key"]'
+            ];
+            
+            for (const selector of keySelectors) {
+                try {
+                    const elements = await page.$$(selector);
+                    
+                    for (const element of elements) {
+                        const text = await element.evaluate(el => 
+                            el.textContent || el.value || el.getAttribute('value') || ''
+                        );
+                        
+                        // ตรวจสอบว่าเป็น API key (มากกว่า 20 ตัวอักษร และเป็น alphanumeric)
+                        if (text && text.length > 20 && /^[a-zA-Z0-9_.-]{20,}$/.test(text.trim())) {
+                            apiKey = text.trim();
+                            console.log(`${new Date().toISOString()} Found API key with ${selector} (length: ${apiKey.length})`);
+                            break;
+                        }
+                    }
+                    if (apiKey) break;
+                } catch (e) {
+                    // Continue to next selector
+                }
             }
-        }
-        
-        if (browser) {
-            try {
-                await browser.close();
-                console.log(`${new Date().toISOString()} Browser closed`);
-            } catch (e) {
-                console.log(`${new Date().toISOString()} Browser close warning: ${e.message}`);
+            
+            if (!apiKey) {
+                throw new Error('Could not extract API key from page');
+            }
+            
+            console.log(`${new Date().toISOString()} SUCCESS: API Key extracted!`);
+            console.log(`${new Date().toISOString()} Length: ${apiKey.length}`);
+            console.log(`${new Date().toISOString()} Preview: ${apiKey.substring(0, 10)}...`);
+            
+            // Save key
+            fs.writeFileSync('/work/n8n-api-key.txt', apiKey);
+            console.log(`${new Date().toISOString()} API key saved to file`);
+            
+            return apiKey;
+            
+        } catch (error) {
+            console.error(`${new Date().toISOString()} Attempt ${retryCount + 1} failed: ${error.message}`);
+            
+            // Cleanup current attempt
+            if (page) {
+                try {
+                    await page.close();
+                } catch (e) {}
+                page = null;
+            }
+            
+            if (browser) {
+                try {
+                    await browser.close();
+                } catch (e) {}
+                browser = null;
+            }
+            
+            retryCount++;
+            
+            if (retryCount <= maxRetries) {
+                console.log(`${new Date().toISOString()} Waiting 5 seconds before retry...`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            } else {
+                throw new Error(`All ${maxRetries + 1} attempts failed. Last error: ${error.message}`);
             }
         }
     }
 }
 
-// Run - เรียบง่าย
-createApiKey()
-    .then((apiKey) => {
-        console.log(`${new Date().toISOString()} FINAL SUCCESS: API key created (${apiKey.length} chars)`);
-        process.exit(0);
-    })
-    .catch(error => {
-        console.error(`${new Date().toISOString()} FINAL ERROR: ${error.message}`);
-        process.exit(1);
-    });
-EOF
-
-    echo "[$(date -Iseconds)] ✅ Simple automation script created: /work/create-api-key.js"
+// Improved cleanup function
+async function cleanup(browser, page) {
+    console.log(`${new Date().toISOString()} Cleaning up...`);
+    
+    if (page) {
+        try {
+            await page.close();
+            console.log(`${new Date().toISOString()} Page closed`);
+        } catch (e) {
+            console.log(`${new Date().toISOString()} Page close warning: ${e.message}`);
+        }
+    }
+    
+    if (browser) {
+        try {
+            await browser.close();
+            console.log(`${new Date().toISOString()} Browser closed`);
+        } catch (e) {
+            console.log(`${new Date().toISOString()} Browser close warning: ${e.message}`);
+        }
+    }
 }
 
-# Simple health check (เหมือนเดิม)
+// Main execution with proper error handling
+async function main() {
+    try {
+        const apiKey = await createApiKey();
+        console.log(`${new Date().toISOString()} FINAL SUCCESS: API key created (${apiKey.length} chars)`);
+        process.exit(0);
+    } catch (error) {
+        console.error(`${new Date().toISOString()} FINAL ERROR: ${error.message}`);
+        process.exit(1);
+    }
+}
+
+// Handle process termination gracefully
+process.on('SIGTERM', () => {
+    console.log('Received SIGTERM, exiting gracefully...');
+    process.exit(1);
+});
+
+process.on('SIGINT', () => {
+    console.log('Received SIGINT, exiting gracefully...');
+    process.exit(1);
+});
+
+// Run
+main();
+EOF
+
+    echo "[$(date -Iseconds)] ✅ Stable automation script created: /work/create-api-key.js"
+}
+
+# รุ่นที่ปรับปรุงแล้วของ wait_for_n8n_simple
 wait_for_n8n_simple() {
     echo "[$(date -Iseconds)] Quick N8N availability check..."
     
@@ -354,7 +401,7 @@ wait_for_n8n_simple() {
     for url in "${n8n_urls[@]}"; do
         echo "[$(date -Iseconds)] Testing: $url/healthz"
         
-        if curl -f -s --connect-timeout 5 --max-time 10 "$url/healthz" > /dev/null 2>&1; then
+        if curl -f -s --connect-timeout 3 --max-time 8 "$url/healthz" > /dev/null 2>&1; then
             export N8N_WORKING_URL="$url"
             echo "[$(date -Iseconds)] ✅ N8N ready: $url"
             return 0
@@ -365,7 +412,7 @@ wait_for_n8n_simple() {
     return 1
 }
 
-# Simple owner setup (เหมือนเดิม)
+# รุ่นปรับปรุงของ setup_owner
 setup_owner() {
     echo "[$(date -Iseconds)] Setting up owner account..."
     
@@ -373,6 +420,9 @@ setup_owner() {
     
     local response=$(curl -s -X POST "$setup_url" \
         -H "Content-Type: application/json" \
+        -H "Accept: application/json" \
+        --connect-timeout 10 \
+        --max-time 15 \
         -d "{
             \"email\": \"${N8N_USER_EMAIL}\",
             \"firstName\": \"${N8N_FIRST_NAME:-Admin}\",
@@ -384,14 +434,14 @@ setup_owner() {
     return 0
 }
 
-# Main execution - ย้อนกลับให้เรียบง่าย
+# Main execution - รุ่นปรับปรุง
 main() {
-    echo "[$(date -Iseconds)] === Simple N8N API Key Generation ==="
+    echo "[$(date -Iseconds)] === Stable N8N API Key Generation ==="
     
     # Check environment
     check_env_vars
     
-    # Check chromium - แค่ตรวจสอบว่ามีไฟล์
+    # Check chromium
     if [ ! -x "/usr/bin/chromium" ]; then
         echo "[$(date -Iseconds)] ❌ Chromium not found"
         exit 1
@@ -405,7 +455,7 @@ main() {
     fi
     echo "[$(date -Iseconds)] ✅ Puppeteer available"
     
-    # Quick N8N check
+    # N8N health check
     if ! wait_for_n8n_simple; then
         echo "[$(date -Iseconds)] ❌ N8N not ready"
         exit 1
@@ -414,19 +464,19 @@ main() {
     # Owner setup
     setup_owner
     
-    # Create script
+    # Create stable script
     create_automation_script
     
-    # Show basic info
+    # Show environment info
     echo "[$(date -Iseconds)] Node version: $(node --version)"
     echo "[$(date -Iseconds)] PUPPETEER_EXECUTABLE_PATH: $PUPPETEER_EXECUTABLE_PATH"
     
-    # Run automation - เรียบง่าย
-    echo "[$(date -Iseconds)] 🕐 Starting automation: $(date -Iseconds)"
+    # Run automation with proper timeout
+    echo "[$(date -Iseconds)] 🕐 Starting stable automation: $(date -Iseconds)"
     
     cd /work
     
-    # Run with simple timeout
+    # Run with reasonable timeout (5 minutes)
     if timeout 300 node create-api-key.js; then  
         echo "[$(date -Iseconds)] ✅ Automation completed successfully"
     else
@@ -435,7 +485,7 @@ main() {
         exit 1
     fi
     
-    # Validate result - เรียบง่าย
+    # Validate result
     if [ -f /work/n8n-api-key.txt ]; then
         local key_length=$(wc -c < /work/n8n-api-key.txt)
         local key_preview=$(head -c 10 /work/n8n-api-key.txt)
@@ -457,5 +507,5 @@ main() {
     fi
 }
 
-# Execute
+# Execute main function
 main "$@"
